@@ -4,7 +4,8 @@
       "Bash(flutter devices *)",
       "Bash(flutter run *)",
       "Bash(pod repo *)",
-      "Bash(pod install *)"
+      "Bash(pod install *)",
+      "Bash(git push *)"
     ]
   }
 }
