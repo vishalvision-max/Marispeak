@@ -5,7 +5,9 @@
       "Bash(flutter run *)",
       "Bash(pod repo *)",
       "Bash(pod install *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(find /Users/visionvivante/Downloads -maxdepth 4 -name \"*.js\" -not -path \"*/node_modules/*\" -not -path \"*/build/*\" 2>/dev/null | head -20)",
+      "Read(//Users/visionvivante/Downloads/**)"
     ]
   }
 }

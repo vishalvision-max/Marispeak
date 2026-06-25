@@ -92,9 +92,6 @@ void initState() {
     // Use a post-frame callback to delay the keyboard visibility check until after the build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
      _checkKeyboardVisibility();
-     if (channelID != null) {
-       WebSocketPTTController().joinGroup(channelID!);
-     }
     });
 }
 
@@ -109,7 +106,6 @@ void initState() {
 
   @override
   void dispose() {
-    WebSocketPTTController().joinGroup(currentUser.userId);
     _animationController.dispose();
     super.dispose();
   }
@@ -379,7 +375,8 @@ Widget build(BuildContext context) {
                 //         );
 
      //   await AgoraController().LeaveChannel();
-      _animationController.forward(); // Animate when receiver is selected
+      _animationController.forward();
+      if (channelID != null) WebSocketPTTController().joinGroup(channelID!);
       await WebSocketPTTController().startRecording();
       
             if (await Vibration.hasVibrator() ?? false) {
@@ -397,7 +394,8 @@ Widget build(BuildContext context) {
                             }
                   await WebSocketPTTController().stopRecording();
                   await WebSocketPTTController().sendAudio();
-  _animationController.reverse(); // Only reverse if it was animated
+                  WebSocketPTTController().joinGroup(currentUser.userId);
+  _animationController.reverse();
     
         
         
@@ -430,9 +428,9 @@ Widget build(BuildContext context) {
 
             onTapCancel: () async {
       _animationController.reverse();
-      
                   await WebSocketPTTController().stopRecording();
                   await WebSocketPTTController().sendAudio();
+                  WebSocketPTTController().joinGroup(currentUser.userId);
       //  print(currentUser.userId);
             },
             child: Center(

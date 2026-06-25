@@ -309,11 +309,11 @@ class WebSocketPTTController with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
-      // Release the audio session so the native Swift NativePTTPlayer can
-      // claim it cleanly for background playback. Fighting iOS here causes
-      // background audio to be silenced.
+      // Stop the Flutter player but do NOT deactivate the audio session.
+      // Calling setActive(false) here kills the iOS session that NativePTTPlayer
+      // needs to play background audio — that was the root cause of silent PTT
+      // when the app was backgrounded.
       _player.stop();
-      AudioSession.instance.then((s) => s.setActive(false));
     } else if (state == AppLifecycleState.resumed) {
       AudioSession.instance.then((s) async {
         await s.configure(const AudioSessionConfiguration.music());

@@ -168,7 +168,7 @@ class NativePTTPlayer: NSObject, URLSessionWebSocketDelegate {
                 // ✅ Use .playback (not .playAndRecord) for incoming audio only.
                 // .playAndRecord + .voiceChat conflicts with LiveKit's session (Error 560557684).
                 // mixWithOthers ensures we don't interrupt any ongoing WebRTC audio.
-                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers, .allowBluetooth, .allowBluetoothA2DP])
+                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers, .allowBluetoothA2DP])
                 try session.setActive(true, options: .notifyOthersOnDeactivation)
                 print("🔊 NativePTTPlayer: Background playback session activated")
             } catch {
@@ -553,15 +553,10 @@ extension NativePTTPlayer: AVAudioPlayerDelegate {
     GeneratedPluginRegistrant.register(with: self)
 
     // ✅ Set up CallKit provider once — reused for all PTT calls (Apple recommends a single CXProvider lifetime)
-    let config = CXProviderConfiguration()
-    config.localizedName = "Walkie-Talkie"
+    let config = CXProviderConfiguration(localizedName: "Walkie-Talkie")
     config.supportsVideo = false
     config.maximumCallsPerCallGroup = 1
     config.supportedHandleTypes = [.generic]
-    config.supportsHolding = false
-    config.supportsDTMF = false
-    config.supportsGrouping = false
-    config.supportsUngrouping = false
     callProvider = CXProvider(configuration: config)
     callProvider?.setDelegate(self, queue: nil)
     // ✅ Listen for when the background audio finishes playing (Globally)
