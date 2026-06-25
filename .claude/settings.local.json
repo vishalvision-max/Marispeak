@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter devices *)",
+      "Bash(flutter run *)",
+      "Bash(pod repo *)",
+      "Bash(pod install *)"
+    ]
+  }
+}
