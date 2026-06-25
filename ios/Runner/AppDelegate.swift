@@ -552,6 +552,16 @@ extension NativePTTPlayer: AVAudioPlayerDelegate {
     // ✅ Register Flutter plugins
     GeneratedPluginRegistrant.register(with: self)
 
+    // ✅ Send stored VoIP token to Flutter immediately on launch
+    // receivedEphemeralPushToken only fires on token refresh, not every launch.
+    // Reading from UserDefaults ensures Flutter always gets the token.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+      if let storedToken = UserDefaults.standard.string(forKey: "voip_token"), !storedToken.isEmpty {
+        print("📲 Sending stored VoIP token to Flutter: \(storedToken.prefix(8))...")
+        self.sendVoIPTokenToFlutter(storedToken)
+      }
+    }
+
     // ✅ Set up CallKit provider once — reused for all PTT calls (Apple recommends a single CXProvider lifetime)
     let config = CXProviderConfiguration(localizedName: "Walkie-Talkie")
     config.supportsVideo = false
@@ -931,10 +941,10 @@ extension NativePTTPlayer: AVAudioPlayerDelegate {
   // ─────────────────────────────────────────────────────
 
   private func sendVoIPTokenToFlutter(_ token: String) {
-    guard let controller = window?.rootViewController as? FlutterViewController else { return }
-    let channel = FlutterMethodChannel(name: "ptt/voip", binaryMessenger: controller.binaryMessenger)
     DispatchQueue.main.async {
-        channel.invokeMethod("onVoIPToken", arguments: token)
+      guard let controller = self.window?.rootViewController as? FlutterViewController else { return }
+      let channel = FlutterMethodChannel(name: "ptt/voip", binaryMessenger: controller.binaryMessenger)
+      channel.invokeMethod("onVoIPToken", arguments: token)
     }
   }
 
