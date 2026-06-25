@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:marispeaks/config/app_config.dart';
+import 'package:marispeaks/controllers/auth_controller.dart';
 import 'package:marispeaks/screens/home/CustomBottomSection.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
@@ -22,6 +24,7 @@ class WebSocketPTTController with WidgetsBindingObserver {
   WebSocketPTTController._internal();
 
   static const platform = MethodChannel('custom.audio');
+  static const _voipPlatform = MethodChannel('ptt/voip');
 
   WebSocketChannel? _channel;
   StreamSubscription? _wsSubscription;
@@ -53,9 +56,26 @@ class WebSocketPTTController with WidgetsBindingObserver {
     if (Platform.isIOS) {
       forceSpeakerOnIOS();
       platform.setMethodCallHandler((call) async {
-        if (call.method == 'onVoipToken') {
+        if (call.method == 'onVoIPToken') {
           voipToken = call.arguments as String;
           debugPrint("📱 Received VoIP Token: $voipToken");
+          // Save to Firestore
+          final uid = AuthController.instance.currentUser?.userId;
+          if (uid != null) {
+            FirebaseFirestore.instance
+                .collection('Users')
+                .doc(uid)
+                .update({'voipToken': voipToken}).catchError((_) {});
+          }
+          // Also update the live WebSocket connection so server can wake us when locked
+          if (isConnected && senderId != null) {
+            _channel?.sink.add(jsonEncode({
+              "type": "register",
+              "userId": senderId,
+              "voipToken": voipToken,
+            }));
+            debugPrint("📡 VoIP token sent to PTT server");
+          }
         }
       });
     }
@@ -259,10 +279,15 @@ class WebSocketPTTController with WidgetsBindingObserver {
       "type": "switch",
       "newGroupId": groupId,
     }));
-    // Mirror room join to native Swift layer (works in background)
     if (Platform.isIOS) {
+      // Tell NativePTTPlayer which group to listen to in background
       platform.invokeMethod(
           'nativeJoinGroup', {'groupId': groupId}).catchError((_) {});
+      // Tell the iOS PTT framework which channel we are in.
+      // This triggers receivedEphemeralPushToken → voipToken saved → server can
+      // send VoIP push to wake this device when phone is locked.
+      _voipPlatform.invokeMethod(
+          'joinChannel', {'groupId': groupId}).catchError((_) {});
     }
     debugPrint("👥 Joined group $groupId");
   }
