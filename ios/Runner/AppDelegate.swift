@@ -164,17 +164,27 @@ class NativePTTPlayer: NSObject, URLSessionWebSocketDelegate {
         // Modifying the category or overriding the port will crash Apple's internal routing!
         if audioSession == nil {
             let session = AVAudioSession.sharedInstance()
+            // Interrupt other audio (Spotify, Instagram, etc.) so PTT is clearly heard.
+            // .notifyOthersOnDeactivation tells Spotify to resume when we release the session.
+            // No .mixWithOthers — PTT must take over the audio focus exclusively.
+            // Use .playAndRecord which reliably supports Bluetooth A2DP + HFP.
+            // .playback + .allowBluetoothA2DP fails (-50) when PTChannelManager resets
+            // the session between our setActive and the retry. .playAndRecord is what
+            // PTChannelManager itself uses and is not rejected by the system.
+            // .defaultToSpeaker routes to loud speaker when no BT device is connected.
+            // .allowBluetooth = HFP (car / older BT), .allowBluetoothA2DP = A2DP (AirPods / modern BT).
             do {
-                // ✅ Use .playback (not .playAndRecord) for incoming audio only.
-                // .playAndRecord + .voiceChat conflicts with LiveKit's session (Error 560557684).
-                // mixWithOthers ensures we don't interrupt any ongoing WebRTC audio.
-                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers, .allowBluetoothA2DP])
-                try session.setActive(true, options: .notifyOthersOnDeactivation)
-                print("🔊 NativePTTPlayer: Background playback session activated")
+                try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP])
+                print("🔊 NativePTTPlayer: Audio category set — BT + speaker ready")
             } catch {
-                // Non-fatal: processQueue() will still try to play.
-                // AVAudioPlayer may work even without explicit category if session is already active.
-                print("⚠️ NativePTTPlayer: Could not reconfigure session (\(error)) — will attempt playback anyway")
+                try? session.setCategory(.playback, mode: .default, options: [])
+                print("⚠️ NativePTTPlayer: setCategory failed (\(error)) — using plain playback")
+            }
+            do {
+                try session.setActive(true, options: .notifyOthersOnDeactivation)
+                print("🔊 NativePTTPlayer: Session activated — Spotify/other audio paused")
+            } catch {
+                print("⚠️ NativePTTPlayer: setActive failed (\(error)) — will attempt playback anyway")
             }
         } else {
             print("🔊 NativePTTPlayer: PushToTalk audio session active")
@@ -288,7 +298,9 @@ class NativePTTPlayer: NSObject, URLSessionWebSocketDelegate {
         audioRecorder = nil
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
-        print("🔌 NativePTTPlayer: Disconnected")
+        // Release audio session so Spotify / other interrupted apps resume automatically
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        print("🔌 NativePTTPlayer: Disconnected — audio session released, other apps can resume")
     }
 
     // ────────────────────────────────────────────────────────────
@@ -552,15 +564,7 @@ extension NativePTTPlayer: AVAudioPlayerDelegate {
     // ✅ Register Flutter plugins
     GeneratedPluginRegistrant.register(with: self)
 
-    // ✅ Send stored VoIP token to Flutter immediately on launch
-    // receivedEphemeralPushToken only fires on token refresh, not every launch.
-    // Reading from UserDefaults ensures Flutter always gets the token.
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-      if let storedToken = UserDefaults.standard.string(forKey: "voip_token"), !storedToken.isEmpty {
-        print("📲 Sending stored VoIP token to Flutter: \(storedToken.prefix(8))...")
-        self.sendVoIPTokenToFlutter(storedToken)
-      }
-    }
+    // VoIP token is sent to Flutter when nativeConnect is called (Flutter signals ready)
 
     // ✅ Set up CallKit provider once — reused for all PTT calls (Apple recommends a single CXProvider lifetime)
     let config = CXProviderConfiguration(localizedName: "Walkie-Talkie")
@@ -644,6 +648,11 @@ extension NativePTTPlayer: AVAudioPlayerDelegate {
             UserDefaults.standard.set(userId, forKey: "flutter.ptt_user_id")
             UserDefaults.standard.synchronize()
             print("📱 nativeConnect: userId stored = \(userId)")
+          }
+          // Flutter method channel is now ready — safe to send stored VoIP token
+          if let storedToken = UserDefaults.standard.string(forKey: "voip_token"), !storedToken.isEmpty {
+            print("📲 Flutter ready — sending VoIP token: \(storedToken.prefix(8))...")
+            self.sendVoIPTokenToFlutter(storedToken)
           }
           result(nil)
 

@@ -55,7 +55,7 @@ class WebSocketPTTController with WidgetsBindingObserver {
 
     if (Platform.isIOS) {
       forceSpeakerOnIOS();
-      platform.setMethodCallHandler((call) async {
+      _voipPlatform.setMethodCallHandler((call) async {
         if (call.method == 'onVoIPToken') {
           voipToken = call.arguments as String;
           debugPrint("📱 Received VoIP Token: $voipToken");
