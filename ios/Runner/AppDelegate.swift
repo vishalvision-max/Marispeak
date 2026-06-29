@@ -80,16 +80,21 @@ class NativePTTPlayer: NSObject, URLSessionWebSocketDelegate {
 
         let serverUrl = UserDefaults.standard.string(forKey: "flutter.ptt_server_url") ?? NativePTTPlayer.defaultServerUrl
         print("🔗 Using PTT server: \(serverUrl)")
-        
-        guard let url = URL(string: serverUrl) else { 
+
+        guard let url = URL(string: serverUrl) else {
             print("❌ Invalid PTT server URL: \(serverUrl)")
-            return 
+            return
         }
         webSocketTask = urlSession.webSocketTask(with: url)
         webSocketTask?.resume()
 
-        // Register
-        sendMessage(["type": "register", "userId": userId])
+        // Register — include stored VoIP token so server can wake this device
+        var registerMsg = ["type": "register", "userId": userId]
+        if let token = UserDefaults.standard.string(forKey: "voip_token"), !token.isEmpty {
+            registerMsg["voipToken"] = token
+            registerMsg["tokenType"] = UserDefaults.standard.string(forKey: "voip_token_type") ?? "ptt"
+        }
+        sendMessage(registerMsg)
         // Join the target group (the groupId from the push payload = sender's channel)
         sendMessage(["type": "switch", "newGroupId": groupId])
 
@@ -280,6 +285,33 @@ class NativePTTPlayer: NSObject, URLSessionWebSocketDelegate {
         print("🔌 NativePTTPlayer: Soft-disconnected (audio session state preserved)")
     }
 
+    // Sends a lightweight register message to the live WebSocket (if connected) or
+    // opens a short-lived connection just to deliver the token update.
+    func registerTokenWithServer(userId: String, token: String, tokenType: String) {
+        let serverUrl = UserDefaults.standard.string(forKey: "flutter.ptt_server_url") ?? NativePTTPlayer.defaultServerUrl
+        guard let url = URL(string: serverUrl) else { return }
+        // If already connected reuse the existing socket
+        if let task = webSocketTask {
+            let msg: [String: String] = ["type": "register", "userId": userId, "voipToken": token, "tokenType": tokenType]
+            if let data = try? JSONSerialization.data(withJSONObject: msg),
+               let str = String(data: data, encoding: .utf8) {
+                task.send(.string(str)) { _ in }
+            }
+            return
+        }
+        // No existing socket — open a one-shot connection just to push the token
+        let tmpSession = URLSession(configuration: .default)
+        let tmpTask = tmpSession.webSocketTask(with: url)
+        tmpTask.resume()
+        let msg: [String: String] = ["type": "register", "userId": userId, "voipToken": token, "tokenType": tokenType]
+        if let data = try? JSONSerialization.data(withJSONObject: msg),
+           let str = String(data: data, encoding: .utf8) {
+            tmpTask.send(.string(str)) { _ in
+                tmpTask.cancel(with: .normalClosure, reason: nil)
+            }
+        }
+    }
+
     // 🔴 Full disconnect: resets ALL state including audio session flag.
     // Only call this when the PTT session has officially ended (didDeactivate fires).
     func disconnect() {
@@ -333,8 +365,13 @@ class NativePTTPlayer: NSObject, URLSessionWebSocketDelegate {
             }
             webSocketTask = urlSession.webSocketTask(with: url)
             webSocketTask?.resume()
+            var registerMsg = ["type": "register", "userId": userId]
+            if let token = UserDefaults.standard.string(forKey: "voip_token"), !token.isEmpty {
+                registerMsg["voipToken"] = token
+                registerMsg["tokenType"] = UserDefaults.standard.string(forKey: "voip_token_type") ?? "ptt"
+            }
             print("📡 Sent register message for userId: \(userId)")
-            sendMessage(["type": "register", "userId": userId])
+            sendMessage(registerMsg)
             print("📡 Sent switch message to group: \(groupId)")
             sendMessage(["type": "switch", "newGroupId": groupId])
             receiveNextMessage()
@@ -747,9 +784,9 @@ extension NativePTTPlayer: AVAudioPlayerDelegate {
                     for type: PKPushType) {
     let token = pushCredentials.token.map { String(format: "%02x", $0) }.joined()
     print("📲 VoIP Push Token: \(token)")
-    // Store token locally so Flutter can retrieve it
     UserDefaults.standard.set(token, forKey: "voip_token")
-    // Send token to Flutter side immediately if the view is ready
+    // Tag as PushKit VoIP token so the server uses the <bundle-id>.voip APNs topic
+    UserDefaults.standard.set("voip", forKey: "voip_token_type")
     sendVoIPTokenToFlutter(token)
   }
 
@@ -950,6 +987,9 @@ extension NativePTTPlayer: AVAudioPlayerDelegate {
   // ─────────────────────────────────────────────────────
 
   private func sendVoIPTokenToFlutter(_ token: String) {
+    // Mirror token type with the flutter. prefix so SharedPreferences.getString('voip_token_type') works in Dart
+    let tokenType = UserDefaults.standard.string(forKey: "voip_token_type") ?? "ptt"
+    UserDefaults.standard.set(tokenType, forKey: "flutter.voip_token_type")
     DispatchQueue.main.async {
       guard let controller = self.window?.rootViewController as? FlutterViewController else { return }
       let channel = FlutterMethodChannel(name: "ptt/voip", binaryMessenger: controller.binaryMessenger)
@@ -1067,9 +1107,13 @@ extension AppDelegate: PTChannelManagerDelegate, PTChannelRestorationDelegate {
         let token = pushToken.map { String(format: "%02x", $0) }.joined()
         print("📲 PTT Framework VoIP Token: \(token)")
         UserDefaults.standard.set(token, forKey: "voip_token")
+        // Tag this as a PushToTalk token so the server uses the correct APNs topic (voip-ptt)
+        UserDefaults.standard.set("ptt", forKey: "voip_token_type")
         sendVoIPTokenToFlutter(token)
-        
-        // ✅ Token refresh is normal iOS behavior - no notification needed
+        // Re-register with the server immediately so the stored type is up to date
+        if let userId = UserDefaults.standard.string(forKey: "flutter.ptt_user_id"), !userId.isEmpty {
+            NativePTTPlayer.shared.registerTokenWithServer(userId: userId, token: token, tokenType: "ptt")
+        }
         print("✅ VoIP token refreshed and stored successfully")
     }
     
