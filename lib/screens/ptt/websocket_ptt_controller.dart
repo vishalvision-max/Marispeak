@@ -2,20 +2,18 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:marispeaks/config/app_config.dart';
-import 'package:marispeaks/controllers/auth_controller.dart';
 import 'package:marispeaks/screens/home/CustomBottomSection.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:audio_session/audio_session.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class WebSocketPTTController with WidgetsBindingObserver {
   static final WebSocketPTTController _instance =
@@ -59,22 +57,18 @@ class WebSocketPTTController with WidgetsBindingObserver {
         if (call.method == 'onVoIPToken') {
           voipToken = call.arguments as String;
           debugPrint("📱 Received VoIP Token: $voipToken");
-          // Save to Firestore
-          final uid = AuthController.instance.currentUser?.userId;
-          if (uid != null) {
-            FirebaseFirestore.instance
-                .collection('Users')
-                .doc(uid)
-                .update({'voipToken': voipToken}).catchError((_) {});
-          }
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('voip_token', voipToken!);
           // Also update the live WebSocket connection so server can wake us when locked
           if (isConnected && senderId != null) {
+            final tokenType = prefs.getString('voip_token_type') ?? 'ptt';
             _channel?.sink.add(jsonEncode({
               "type": "register",
               "userId": senderId,
               "voipToken": voipToken,
+              "tokenType": tokenType,
             }));
-            debugPrint("📡 VoIP token sent to PTT server");
+            debugPrint("📡 VoIP token ($tokenType) sent to PTT server");
           }
         }
       });
@@ -132,14 +126,30 @@ class WebSocketPTTController with WidgetsBindingObserver {
     senderId = uid.trim();
     groupId = uid.trim();
 
+    // Load saved VoIP token from local storage if not already in memory
+    if (voipToken == null && Platform.isIOS) {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString('voip_token');
+      if (saved != null && saved.isNotEmpty) {
+        voipToken = saved;
+        debugPrint("📱 Loaded VoIP token from local storage: $voipToken");
+      }
+    }
+
     try {
       _channel = WebSocketChannel.connect(Uri.parse(AppConfig.pttServerUrl));
 
-      _channel!.sink.add(jsonEncode({
+      final registerMsg = <String, dynamic>{
         "type": "register",
         "userId": senderId,
-        "voipToken": voipToken,
-      }));
+      };
+      if (voipToken != null && voipToken!.isNotEmpty) {
+        registerMsg["voipToken"] = voipToken;
+        final prefs = await SharedPreferences.getInstance();
+        final tokenType = prefs.getString('voip_token_type') ?? 'ptt';
+        registerMsg["tokenType"] = tokenType;
+      }
+      _channel!.sink.add(jsonEncode(registerMsg));
 
       _wsSubscription = _channel!.stream.listen(
         (event) => _onWSMessage(event),

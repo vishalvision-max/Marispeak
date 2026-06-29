@@ -9,7 +9,8 @@
       "Bash(find /Users/visionvivante/Downloads -maxdepth 4 -name \"*.js\" -not -path \"*/node_modules/*\" -not -path \"*/build/*\" 2>/dev/null | head -20)",
       "Read(//Users/visionvivante/Downloads/**)",
       "Bash(find /Users/visionvivante -maxdepth 4 -name \"index.js\" -o -name \"index.ts\" 2>/dev/null | grep -v node_modules | grep -v build | grep -v \".dart\")",
-      "Read(//Users/visionvivante/**)"
+      "Read(//Users/visionvivante/**)",
+      "Bash(xargs ls -la)"
     ]
   }
 }
